@@ -1,0 +1,2 @@
+# ekaterinburg
+Audio visualization framework
