@@ -33,5 +33,5 @@ include_directories(${GLFW_DIR}/deps)
 
 file(GLOB sources *.cpp)
 
-add_executable(main ${sources})
-target_link_libraries(main ${LIBRARIES})
+add_executable(vulkan_tutorial vulkan_tutorial/main.cpp)
+target_link_libraries(vulkan_tutorial ${LIBRARIES})
