@@ -17,6 +17,8 @@
 #include <unordered_set>
 #include <vector>
 // #include <stdio.h>
+#include <cstdint>
+#include <algorithm>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -170,7 +172,114 @@ class HelloTriangleApplication {
       createSurface();
       pickPhysicalDevice();
       createLogicalDevice();
+      createSwapChain();
+      createImageViews();
     }
+  }
+
+  void createImageViews() {
+    swapChainImageViews_.resize(swapChainImages_.size());
+    for (size_t i = 0; i < swapChainImages_.size(); i++) {
+      VkImageViewCreateInfo createInfo{};
+      createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      createInfo.image = swapChainImages_[i];
+
+      // viewType allows to treat images as 1D/2D/3D textures and cube maps
+      createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      createInfo.format = swapChainImageFormat_;
+
+      // identity here means id operation a -> a
+      createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+      createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+      // describes image's purpose and which part of the image should be accessed
+      createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      createInfo.subresourceRange.baseMipLevel = 0;
+      createInfo.subresourceRange.levelCount = 1;
+      createInfo.subresourceRange.baseArrayLayer = 0;
+      createInfo.subresourceRange.layerCount = 1;
+
+      // stereographic 3D application would need multiple layers in the swap
+      // chain and multiple images views for each image (left/right eyes)
+
+      if (vkCreateImageView(device_, &createInfo, nullptr, &swapChainImageViews_[i]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create image views!");
+      }
+    }
+  }
+
+  void createSwapChain() {
+    SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice_);
+
+    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+    VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+    VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+      imageCount = swapChainSupport.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = surface_;
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+    createInfo.imageArrayLayers = 1;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice_);
+    uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+    if (indices.graphicsFamily != indices.presentFamily) {
+      // images used across multiple queue families without explicit
+      // ownership trasfers; currently avoiding ownership concepts
+      // requires at least two distinct queue families
+      createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+      createInfo.queueFamilyIndexCount = 2;
+      createInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+      // image is owned by one queue family at a time and the ownership must
+      // be explicitly transferred before using it; offers the best performance
+      // in most hardware graphics queue family and presentation queue family
+      // are the same, we should stick with exclusive mode then
+      createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      createInfo.queueFamilyIndexCount = 0; // Optional
+      createInfo.pQueueFamilyIndices = nullptr; // Optional
+    }
+
+    // some certain transform can be specified to apply to all images in
+    // the swap chain if it's supported, like rotation or flip
+    // to leave it as is, set to current transformation
+    createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+    // for overlap with other windows
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+    // we don't care about pixels we don't see (e.g. they are covered with other
+    // windows)
+    createInfo.presentMode = presentMode;
+    createInfo.clipped = VK_TRUE;
+
+    // sometimes swapchain needs to be recreated (e.g. when the window was
+    // resized); for now creating only one swap chain
+    createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    if (vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapChain_) != VK_SUCCESS) {
+      throw std::runtime_error("failed to create swap chain!");
+    }
+
+    vkGetSwapchainImagesKHR(device_, swapChain_, &imageCount, nullptr);
+    swapChainImages_.resize(imageCount);
+    vkGetSwapchainImagesKHR(device_, swapChain_, &imageCount, swapChainImages_.data());
+
+    swapChainImageFormat_ = surfaceFormat.format;
+    swapChainExtent_ = extent;
   }
 
   void createSurface() {
@@ -364,7 +473,63 @@ class HelloTriangleApplication {
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_,
                                               &details.capabilities);
 
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &formatCount, nullptr);
+
+    if (formatCount != 0) {
+      details.formats.resize(formatCount);
+      vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &formatCount, details.formats.data());
+    }
+
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_, &presentModeCount, nullptr);
+
+    if (presentModeCount != 0) {
+      details.presentModes.resize(presentModeCount);
+      vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_, &presentModeCount, details.presentModes.data());
+    }
+
     return details;
+  }
+
+  static VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes) {
+    for (const auto &availablePresentMode : availablePresentModes) {
+      if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+        return availablePresentMode;
+      }
+    }
+    return VK_PRESENT_MODE_FIFO_KHR;
+  }
+
+  static VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats) {
+    for (const auto &availableFormat : availableFormats) {
+      if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB
+          && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        return availableFormat;
+      }
+    }
+    return availableFormats[0];
+  }
+
+  VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {
+    if (capabilities.currentExtent.width != UINT32_MAX) {
+      return capabilities.currentExtent;
+    } else {
+      int width, height;
+      glfwGetFramebufferSize(window_, &width, &height);
+
+      VkExtent2D actualExtent = {
+          static_cast<uint32_t>(width),
+          static_cast<uint32_t>(height)
+      };
+
+      actualExtent.width =
+          std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
+      actualExtent.height = std::max(capabilities.minImageExtent.height,
+                                     std::min(capabilities.maxImageExtent.height, actualExtent.height));
+
+      return actualExtent;
+    }
   }
 
   // start rendering frames
@@ -380,6 +545,12 @@ class HelloTriangleApplication {
     if (enableValidationLayers) {
       DestroyDebugUtilsMessengerEXT(instance_, debugMessenger_, nullptr);
     }
+
+    for (auto imageView : swapChainImageViews_) {
+      vkDestroyImageView(device_, imageView, nullptr);
+    }
+
+    vkDestroySwapchainKHR(device_, swapChain_, nullptr);
 
     vkDestroyDevice(device_, nullptr);
 
@@ -402,7 +573,15 @@ class HelloTriangleApplication {
     // For some reason geometryShader is not true for both of my cards
     QueueFamilyIndices indices = findQueueFamilies(device);
 
-    return indices.isComplete() && checkDeviceExtensionSupport(device);
+    bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+    bool swapChainAdequate = false;
+    if (extensionsSupported) {
+      SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+      swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+    }
+
+    return indices.isComplete() && swapChainAdequate && extensionsSupported;
   }
 
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
@@ -486,6 +665,11 @@ class HelloTriangleApplication {
   // glfwCreateWindowSurface that can handle the platform differences
   VkSurfaceKHR surface_;
   VkQueue presentQueue_;
+  VkSwapchainKHR swapChain_;
+  std::vector<VkImage> swapChainImages_;
+  VkFormat swapChainImageFormat_;
+  VkExtent2D swapChainExtent_;
+  std::vector<VkImageView> swapChainImageViews_;
 };
 
 int main() {
