@@ -31,5 +31,13 @@
 *.out
 *.app
 
+main
+imgui.ini
+cmake_install.cmake
+Makefile
+CMakeCache.txt
 .idea/
 /cmake-build-debug/
+/binary_dir/
+/CMakeFiles/
+
