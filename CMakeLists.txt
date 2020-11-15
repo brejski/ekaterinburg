@@ -33,5 +33,18 @@ include_directories(${GLFW_DIR}/deps)
 
 file(GLOB sources *.cpp)
 
-add_executable(vulkan_tutorial vulkan_tutorial/main.cpp)
+function(build_shader TARGETOBJ SHADERNAME)
+    set(FILENAME "${CMAKE_SOURCE_DIR}/${SHADERNAME}")
+    set(OUTNAME "${CMAKE_BINARY_DIR}/${SHADERNAME}.spv")
+    add_custom_command(OUTPUT ${OUTNAME}
+            COMMAND glslc ${FILENAME} -o ${OUTNAME}
+            DEPENDS ${FILENAME})
+    add_custom_target(MAKE_${SHADERNAME} ALL DEPENDS ${OUTNAME})
+    add_dependencies(${TARGETOBJ} MAKE_${SHADERNAME})
+endfunction()
+
+add_executable(vulkan_tutorial vulkan_tutorial.cpp)
 target_link_libraries(vulkan_tutorial ${LIBRARIES})
+
+build_shader(vulkan_tutorial shader.frag)
+build_shader(vulkan_tutorial shader.vert)
