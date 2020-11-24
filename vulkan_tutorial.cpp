@@ -137,15 +137,22 @@ class HelloTriangleApplication {
   std::vector<VkFence> imagesInFlight_;
   size_t currentFrame_ = 0;
 
+  bool framebufferResized = false;
+
   void initWindow() {
     glfwInit();
 
     // Avoid creating an OpenGL context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    // Handling resizable windows takes some special care
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     window_ = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(window_, this);
+    glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
+  }
+
+  static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+    auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+    app->framebufferResized = true;
   }
 
   // initiate vulkan objects
@@ -168,6 +175,58 @@ class HelloTriangleApplication {
     }
   }
 
+  // old versions of the objects that depend on the swap chain need to be
+  // cleaned up before recreating them.
+  void cleanupSwapChain() {
+    for (auto framebuffer : swapChainFramebuffers_) {
+      vkDestroyFramebuffer(device_, framebuffer, nullptr);
+    }
+
+    vkFreeCommandBuffers(device_, commandPool_,
+        static_cast<uint32_t>(commandBuffers_.size()),commandBuffers_.data());
+
+    vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
+    vkDestroyRenderPass(device_, renderPass_, nullptr);
+
+    for (auto imageView : swapChainImageViews_) {
+      vkDestroyImageView(device_, imageView, nullptr);
+    }
+
+    vkDestroySwapchainKHR(device_, swapChain_, nullptr);
+  }
+
+  // in case if the window surface changes and the swap chain is no longer
+  // compatible with it we need to recreate the swap chain and everything that
+  // depends on it.
+  void recreateSwapChain() {
+    std::cout << "recreating swap chain" << std::endl;
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window_, &width, &height);
+    while (width == 0 || height == 0) {
+      std::cout << "window minimised" << std::endl;
+      glfwGetFramebufferSize(window_, &width, &height);
+      glfwWaitEvents();
+    }
+    // we shouldn't touch resources that may still be in use/
+    vkDeviceWaitIdle(device_);
+
+    cleanupSwapChain();
+
+    createSwapChain();
+    // image views need to be recreated as they are based directly on the swap
+    // chain images
+    createImageViews();
+    // render pass depends on the format of the swap chain images
+    createRenderPass();
+    // viewport and scissor rectangle size are specified during graphics
+    // pipeline creation
+    createGraphicsPipeline();
+    // framebuffers and commandbuffers directly depend on swap chain images
+    createFramebuffers();
+    createCommandBuffers();
+  }
+
   // start rendering frames
   void mainLoop() {
     // until either an error occurs or the window is closed
@@ -181,6 +240,8 @@ class HelloTriangleApplication {
 
   // once the window is closed
   void cleanup() {
+    cleanupSwapChain();
+
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
       vkDestroySemaphore(device_, renderFinishedSemaphores_[i], nullptr);
       vkDestroySemaphore(device_, imageAvailableSemaphores_[i], nullptr);
@@ -189,19 +250,6 @@ class HelloTriangleApplication {
 
     vkDestroyCommandPool(device_, commandPool_, nullptr);
 
-    for (auto framebuffer : swapChainFramebuffers_) {
-      vkDestroyFramebuffer(device_, framebuffer, nullptr);
-    }
-
-    vkDestroyPipeline(device_, graphicsPipeline_, nullptr);
-    vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);
-    vkDestroyRenderPass(device_, renderPass_, nullptr);
-
-    for (auto imageView : swapChainImageViews_) {
-      vkDestroyImageView(device_, imageView, nullptr);
-    }
-
-    vkDestroySwapchainKHR(device_, swapChain_, nullptr);
     vkDestroyDevice(device_, nullptr);
 
     if (enableValidationLayers) {
@@ -835,8 +883,15 @@ class HelloTriangleApplication {
 
     uint32_t imageIndex;
     // UINT64_MAX for timeout value disables it
-    vkAcquireNextImageKHR(device_, swapChain_, UINT64_MAX,
+    VkResult result = vkAcquireNextImageKHR(device_, swapChain_, UINT64_MAX,
                           imageAvailableSemaphores_[currentFrame_], VK_NULL_HANDLE, &imageIndex);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreateSwapChain();
+      return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+      throw std::runtime_error("failed to acquire swap chain image");
+    }
 
     if (imagesInFlight_[imageIndex] != VK_NULL_HANDLE) {
       vkWaitForFences(device_, 1, &imagesInFlight_[imageIndex], VK_TRUE, UINT64_MAX);
@@ -877,9 +932,15 @@ class HelloTriangleApplication {
     presentInfo.pResults = nullptr; // Optional
 
     // we will add the error handling here later
-    vkQueuePresentKHR(presentQueue_, &presentInfo);
+    result = vkQueuePresentKHR(presentQueue_, &presentInfo);
 
-    vkQueueWaitIdle(presentQueue_);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+      framebufferResized = false;
+      recreateSwapChain();
+    } else if (result != VK_SUCCESS) {
+      throw std::runtime_error("failed to present swap chain image");
+    }
+
     currentFrame_ = (currentFrame_ + 1) % MAX_FRAMES_IN_FLIGHT;
   }
 
