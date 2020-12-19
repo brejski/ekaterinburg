@@ -38,6 +38,7 @@ Makefile
 CMakeCache.txt
 .idea/
 /cmake-build-debug/
+/cmake-build-default/
 /binary_dir/
 /CMakeFiles/
 
